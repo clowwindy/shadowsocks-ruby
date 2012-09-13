@@ -37,5 +37,5 @@ end
 def merge_sort (array, comparison)
   return array if array.count < 2
   middle = (array.count / 2).ceil
-  merge(merge_sort(array.slice(0, middle), comparison), merge_sort(array.slice(middle, array.count), comparison), comparison)
+  merge(merge_sort(array.slice(0, middle), comparison), merge_sort(array.slice(middle .. array.count), comparison), comparison)
 end

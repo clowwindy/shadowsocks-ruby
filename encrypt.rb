@@ -27,7 +27,7 @@ def get_table (key)
   table = Array.new(256, 0)
   decrypt_table = Array.new(256, 0)
 
-  a = Digest::MD5.digest(key).unpack('<QQ')[0]
+  a = Digest::MD5.digest(key).unpack('Q<')[0]
   i = 0
 
   while i < 256
