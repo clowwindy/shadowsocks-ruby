@@ -26,9 +26,7 @@ require './encrypt'
 
 key = 'foobar!'
 
-$server = 'localhost'
 $remote_port = 8388
-$port = 1080
 
 $encrypt_table, $decrypt_table = get_table(key)
 
@@ -45,12 +43,8 @@ module LocalServer
 
     def post_init
       p "connecting #{@server.remote_addr} via #{@server.server_using}"
-      addr_to_send = @server.addr_to_send.clone
-      encrypt $encrypt_table, addr_to_send
-      send_data addr_to_send
 
       for piece in @server.cached_pieces
-        encrypt $encrypt_table, piece
         send_data piece
       end
       @server.cached_pieces = nil
@@ -59,7 +53,7 @@ module LocalServer
     end
 
     def receive_data data
-      encrypt $decrypt_table, data
+      encrypt $encrypt_table, data
       @server.send_data data
     end
 
@@ -89,53 +83,37 @@ module LocalServer
   end
 
   def receive_data data
+    encrypt $decrypt_table, data
+    p data
     if @stage == 5
-      encrypt $encrypt_table, data
       @connector.send_data data
       return
     end
     if @stage == 0
-      send_data "\x05\x00"
-      @stage = 1
-      return
-    end
-    if @stage == 1
       addr_len = 0
-      cmd = data[1]
-      addrtype = data[3]
-      if cmd != "\x01"
-        warn "unsupported cmd: " + cmd.unpack('c')[0].to_s
-        close_connection
-        return
-      end
+      addrtype = data[0]
       if addrtype == "\x03"
-        addr_len = data[4].unpack('c')[0]
+        addr_len = data[1].unpack('c')[0]
       elsif addrtype != "\x01"
         warn "unsupported addrtype: " + addrtype.unpack('c')[0].to_s
         close_connection
         return
       end
-      @addr_to_send = data[3]
       if addrtype == "\x01"
-        @addr_to_send += data[4..9]
-        @remote_addr = inet_ntoa data[4..7]
-        @remote_port = data[8, 2].unpack('s>')[0]
-        @header_length = 10
+        @remote_addr = inet_ntoa data[1..4]
+        @remote_port = data[5, 2].unpack('s>')[0]
+        @header_length = 7
       else
-        @remote_addr = data[5, addr_len]
-        @addr_to_send += data[4..5 + addr_len + 2]
-        @remote_port = data[5 + addr_len, 2].unpack('s>')[0]
-        @header_length = 5 + addr_len + 2
+        @remote_addr = data[2, addr_len]
+        @remote_port = data[2 + addr_len, 2].unpack('s>')[0]
+        @header_length = 2 + addr_len + 2
       end
-      #p @remote_addr, @remote_port
-      #p @addr_to_send
-      send_data "\x05\x00\x00\x01\x00\x00\x00\x00" + [@remote_port].pack('s>')
       @stage = 4
       if data.size > @header_length
         @cached_pieces.push data[@header_length, data.size]
       end
 
-      @connector = EventMachine.connect $server, $remote_port, LocalConnector, self
+      @connector = EventMachine.connect @remote_addr, @remote_port, LocalConnector, self
     elsif @stage == 4
       @cached_pieces.push data
     end
@@ -151,5 +129,5 @@ module LocalServer
 end
 
 EventMachine::run {
-  EventMachine::start_server "127.0.0.1", $port, LocalServer
+  EventMachine::start_server "127.0.0.1", $remote_port, LocalServer
 }
