@@ -57,7 +57,6 @@ module LocalServer
       @server.cached_pieces = nil
 
       @server.stage = 5
-
     end
 
     def receive_data data
@@ -83,7 +82,6 @@ module LocalServer
     @header_length = 0
     @remote = 0
     @cached_pieces = []
-    @addr_len = 0
     @remote_addr = nil
     @remote_port = nil
     @connector = nil
@@ -103,6 +101,7 @@ module LocalServer
       return
     end
     if @stage == 1
+      addr_len = 0
       cmd = data[1]
       addrtype = data[3]
       if cmd != "\x01"
@@ -111,7 +110,7 @@ module LocalServer
         return
       end
       if addrtype == "\x03"
-        @addr_len = data[4].unpack('c')[0]
+        addr_len = data[4].unpack('c')[0]
       elsif addrtype != "\x01"
         warn "unsupported addrtype: " + cmd.unpack('c')[0].to_s
         close_connection
@@ -124,22 +123,22 @@ module LocalServer
         @remote_port = data[8, 2].unpack('s>')[0]
         @header_length = 10
       else
-        @remote_addr = data[5, @addr_len]
-        @addr_to_send += data[4..5 + @addr_len + 2]
-        @remote_port = data[5 + @addr_len, 2].unpack('s>')[0]
-        @header_length = 5 + @addr_len + 2
+        @remote_addr = data[5, addr_len]
+        @addr_to_send += data[4..5 + addr_len + 2]
+        @remote_port = data[5 + addr_len, 2].unpack('s>')[0]
+        @header_length = 5 + addr_len + 2
       end
       #p @remote_addr, @remote_port
       #p @addr_to_send
       send_data "\x05\x00\x00\x01\x00\x00\x00\x00" + [@remote_port].pack('s>')
-      @connector = EventMachine.connect $server, $remote_port, LocalConnector, self
-
+      @stage = 4
       if data.size > @header_length
         @cached_pieces.push data[@header_length, data.size]
       end
-      stage = 4
+
+      @connector = EventMachine.connect $server, $remote_port, LocalConnector, self
     elsif @stage == 4
-      @cached_pieces.push data[@header_length, data.size]
+      @cached_pieces.push data
     end
 
   end
