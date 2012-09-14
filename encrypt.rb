@@ -54,7 +54,7 @@ def encrypt (table, buf)
   i = 0
 
   while i < buf.length
-    buf[i] = table[buf[i]]
+    buf[i] = table[buf[i].ord].chr
     i += 1
   end
 end

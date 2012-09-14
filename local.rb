@@ -30,12 +30,52 @@ $server = '106.187.51.232'
 $remote_port = 8388
 $port = 1080
 
-encrypt_table, decrypt_table = get_table(key)
+$encrypt_table, $decrypt_table = get_table(key)
+
+def inet_ntoa(n)
+    n.unpack("C*").join "."
+end
 
 module LocalServer
   class LocalConnector < EventMachine::Connection
+    def initialize server
+      @server = server
+      super
+    end
 
+    def post_init
+      p "connecting #{@server.remote_addr} via #{@server.server_using}"
+      addr_to_send = @server.addr_to_send.clone
+      encrypt $encrypt_table, addr_to_send
+      send_data addr_to_send
+
+      # TODO write cached pieces
+      for piece in @server.cached_pieces
+        encrypt $encrypt_table, piece
+        send_data data
+      end
+      @server.cached_pieces = nil
+
+      @server.stage = 5
+
+    end
+
+    def receive_data data
+      encrypt $decrypt_table, data
+      @server.send_data data
+    end
+
+    def unbind
+      @server.close_connection_after_writing
+    end
   end
+
+  attr_accessor :remote_addr
+  attr_accessor :remote_port
+  attr_accessor :stage
+  attr_accessor :addr_to_send
+  attr_accessor :server_using
+  attr_accessor :cached_pieces
 
   def post_init
     puts "local connected"
@@ -46,15 +86,15 @@ module LocalServer
     @addr_len = 0
     @remote_addr = nil
     @remote_port = nil
+    @connector = nil
     @addr_to_send = ""
     @server_using = $server
   end
 
   def receive_data data
-    p @stage
     if @stage == 5
-      encrypt table, data
-      @connection.send_data data
+      encrypt $encrypt_table, data
+      @connector.send_data data
       return
     end
     if @stage == 0
@@ -66,21 +106,21 @@ module LocalServer
       cmd = data[1]
       addrtype = data[3]
       if cmd != "\x01"
-        warn "unsupported cmd: " + cmd.unpack('c')
+        warn "unsupported cmd: " + cmd.unpack('c')[0].to_s
         close_connection
         return
       end
       if addrtype == "\x03"
         @addr_len = data[4].unpack('c')[0]
-      elsif addrtype != 1
-        warn "unsupported addrtype: " + cmd.unpack('c')
+      elsif addrtype != "\x01"
+        warn "unsupported addrtype: " + cmd.unpack('c')[0].to_s
         close_connection
         return
       end
-      @addr_to_send = data[3..4]
-      p data
+      @addr_to_send = data[3]
       if addrtype == "\x01"
-        @addr_to_send += data[4..10]
+        @addr_to_send += data[4..9]
+        @remote_addr = inet_ntoa data[4..7]
         @remote_port = data[8, 2].unpack('s>')[0]
         @header_length = 10
       else
@@ -89,13 +129,25 @@ module LocalServer
         @remote_port = data[5 + @addr_len, 2].unpack('s>')[0]
         @header_length = 5 + @addr_len + 2
       end
-      p @remote_addr, @remote_port
-      p @addr_to_send
+      #p @remote_addr, @remote_port
+      #p @addr_to_send
+      send_data "\x05\x00\x00\x01\x00\x00\x00\x00" + [@remote_port].pack('s>')
+      @connector = EventMachine.connect $server, $remote_port, LocalConnector, self
+
+      if data.size > @header_length
+        @cached_pieces.push data[@header_length, data.size]
+      end
+      stage = 4
+    elsif @stage == 4
+      @cached_pieces.push data[@header_length, data.size]
     end
 
   end
 
   def unbind
+    if @connector != nil
+      @connector.close_connection_after_writing
+    end
 
   end
 end
