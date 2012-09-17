@@ -22,16 +22,21 @@
 
 require 'rubygems'
 require 'eventmachine'
+require 'json'
 require './encrypt'
 
-key = 'foobar!'
+cfg_file = File.open('config.json')
+config = JSON.parse(cfg_file.read)
+cfg_file.close
 
-$remote_port = 8388
+key = config['password']
+
+$remote_port = config['server_port'].to_i
 
 $encrypt_table, $decrypt_table = get_table(key)
 
 def inet_ntoa(n)
-    n.unpack("C*").join "."
+  n.unpack("C*").join "."
 end
 
 module LocalServer
@@ -84,36 +89,43 @@ module LocalServer
 
   def receive_data data
     encrypt $decrypt_table, data
-    p data
     if @stage == 5
       @connector.send_data data
       return
     end
     if @stage == 0
-      addr_len = 0
-      addrtype = data[0]
-      if addrtype == "\x03"
-        addr_len = data[1].unpack('c')[0]
-      elsif addrtype != "\x01"
-        warn "unsupported addrtype: " + addrtype.unpack('c')[0].to_s
-        close_connection
-        return
-      end
-      if addrtype == "\x01"
-        @remote_addr = inet_ntoa data[1..4]
-        @remote_port = data[5, 2].unpack('s>')[0]
-        @header_length = 7
-      else
-        @remote_addr = data[2, addr_len]
-        @remote_port = data[2 + addr_len, 2].unpack('s>')[0]
-        @header_length = 2 + addr_len + 2
-      end
-      @stage = 4
-      if data.size > @header_length
-        @cached_pieces.push data[@header_length, data.size]
-      end
+      begin
+        addr_len = 0
+        addrtype = data[0]
+        if addrtype == "\x03"
+          addr_len = data[1].unpack('c')[0]
+        elsif addrtype != "\x01"
+          warn "unsupported addrtype: " + addrtype.unpack('c')[0].to_s
+          close_connection
+          return
+        end
+        if addrtype == "\x01"
+          @remote_addr = inet_ntoa data[1..4]
+          @remote_port = data[5, 2].unpack('s>')[0]
+          @header_length = 7
+        else
+          @remote_addr = data[2, addr_len]
+          @remote_port = data[2 + addr_len, 2].unpack('s>')[0]
+          @header_length = 2 + addr_len + 2
+        end
+        @stage = 4
+        if data.size > @header_length
+          @cached_pieces.push data[@header_length, data.size]
+        end
 
-      @connector = EventMachine.connect @remote_addr, @remote_port, LocalConnector, self
+        @connector = EventMachine.connect @remote_addr, @remote_port, LocalConnector, self
+      rescue Exception => e
+        warn e
+        if @connector != nil
+          @connector.close_connection
+        end
+        close_connection
+      end
     elsif @stage == 4
       @cached_pieces.push data
     end
@@ -129,5 +141,5 @@ module LocalServer
 end
 
 EventMachine::run {
-  EventMachine::start_server "127.0.0.1", $remote_port, LocalServer
+  EventMachine::start_server "0.0.0.0", $remote_port, LocalServer
 }

@@ -22,13 +22,19 @@
 
 require 'rubygems'
 require 'eventmachine'
+require 'json'
 require './encrypt'
 
-key = 'foobar!'
 
-$server = 'localhost'
-$remote_port = 8388
-$port = 1080
+cfg_file = File.open('config.json')
+config =  JSON.parse(cfg_file.read)
+cfg_file.close
+
+key = config['password']
+
+$server = config['server']
+$remote_port = config['server_port'].to_i
+$port = config['local_port'].to_i
 
 $encrypt_table, $decrypt_table = get_table(key)
 
@@ -100,42 +106,50 @@ module LocalServer
       return
     end
     if @stage == 1
-      addr_len = 0
-      cmd = data[1]
-      addrtype = data[3]
-      if cmd != "\x01"
-        warn "unsupported cmd: " + cmd.unpack('c')[0].to_s
-        close_connection
-        return
-      end
-      if addrtype == "\x03"
-        addr_len = data[4].unpack('c')[0]
-      elsif addrtype != "\x01"
-        warn "unsupported addrtype: " + addrtype.unpack('c')[0].to_s
-        close_connection
-        return
-      end
-      @addr_to_send = data[3]
-      if addrtype == "\x01"
-        @addr_to_send += data[4..9]
-        @remote_addr = inet_ntoa data[4..7]
-        @remote_port = data[8, 2].unpack('s>')[0]
-        @header_length = 10
-      else
-        @remote_addr = data[5, addr_len]
-        @addr_to_send += data[4..5 + addr_len + 2]
-        @remote_port = data[5 + addr_len, 2].unpack('s>')[0]
-        @header_length = 5 + addr_len + 2
-      end
-      #p @remote_addr, @remote_port
-      #p @addr_to_send
-      send_data "\x05\x00\x00\x01\x00\x00\x00\x00" + [@remote_port].pack('s>')
-      @stage = 4
-      if data.size > @header_length
-        @cached_pieces.push data[@header_length, data.size]
-      end
+      begin
+        addr_len = 0
+        cmd = data[1]
+        addrtype = data[3]
+        if cmd != "\x01"
+          warn "unsupported cmd: " + cmd.unpack('c')[0].to_s
+          close_connection
+          return
+        end
+        if addrtype == "\x03"
+          addr_len = data[4].unpack('c')[0]
+        elsif addrtype != "\x01"
+          warn "unsupported addrtype: " + addrtype.unpack('c')[0].to_s
+          close_connection
+          return
+        end
+        @addr_to_send = data[3]
+        if addrtype == "\x01"
+          @addr_to_send += data[4..9]
+          @remote_addr = inet_ntoa data[4..7]
+          @remote_port = data[8, 2].unpack('s>')[0]
+          @header_length = 10
+        else
+          @remote_addr = data[5, addr_len]
+          @addr_to_send += data[4..5 + addr_len + 2]
+          @remote_port = data[5 + addr_len, 2].unpack('s>')[0]
+          @header_length = 5 + addr_len + 2
+        end
+        #p @remote_addr, @remote_port
+        #p @addr_to_send
+        send_data "\x05\x00\x00\x01\x00\x00\x00\x00" + [@remote_port].pack('s>')
+        @stage = 4
+        if data.size > @header_length
+          @cached_pieces.push data[@header_length, data.size]
+        end
 
-      @connector = EventMachine.connect $server, $remote_port, LocalConnector, self
+        @connector = EventMachine.connect $server, $remote_port, LocalConnector, self
+      rescue Exception => e
+        warn e
+        if @connector != nil
+          @connector.close_connection
+        end
+        close_connection
+      end
     elsif @stage == 4
       @cached_pieces.push data
     end
@@ -151,5 +165,5 @@ module LocalServer
 end
 
 EventMachine::run {
-  EventMachine::start_server "127.0.0.1", $port, LocalServer
+  EventMachine::start_server "0.0.0.0", $port, LocalServer
 }
